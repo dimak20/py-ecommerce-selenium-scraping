@@ -1,11 +1,14 @@
+import asyncio
+import concurrent.futures as pool
 import csv
 import logging
 import time
 from dataclasses import dataclass, astuple, fields
 from urllib.parse import urljoin
 
-import requests
+import httpx
 from bs4 import BeautifulSoup
+from httpx import AsyncClient
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
@@ -77,7 +80,7 @@ def get_single_touch(touch: BeautifulSoup) -> Product:
     )
 
 
-def get_single_phone(phone: BeautifulSoup) -> Product:
+async def get_single_phone(phone: BeautifulSoup) -> Product:
     return Product(
         title=phone.select_one("a.title")["title"],
         description=phone.select_one(
@@ -92,7 +95,7 @@ def get_single_phone(phone: BeautifulSoup) -> Product:
     )
 
 
-def parse_single_home_product(product: BeautifulSoup) -> Product:
+async def parse_single_home_product(product: BeautifulSoup) -> Product:
     return Product(
         title=product.select_one("a.title")["title"],
         description=product.select_one(
@@ -111,7 +114,7 @@ def parse_single_home_product(product: BeautifulSoup) -> Product:
     )
 
 
-def parse_single_computer(computer: BeautifulSoup) -> Product:
+async def parse_single_computer(computer: BeautifulSoup) -> Product:
     return Product(
         title=computer.select_one("a.title")["title"],
         description=computer.select_one(
@@ -130,19 +133,21 @@ def parse_single_computer(computer: BeautifulSoup) -> Product:
     )
 
 
-def get_single_page_home_product(page: BeautifulSoup) -> list[Product]:
+async def get_single_page_home_product(page: BeautifulSoup) -> list[Product]:
     home_products = page.select("div.col-lg-9 > div.row > div.col-md-4")
-    return [parse_single_home_product(product) for product in home_products]
+    return [
+        await parse_single_home_product(product) for product in home_products
+    ]
 
 
-def get_single_computer_page(page: BeautifulSoup) -> list[Product]:
+async def get_single_computer_page(page: BeautifulSoup) -> list[Product]:
     computers = page.select("div.col-lg-9 > div.row > div.col-md-4")
-    return [parse_single_computer(computer) for computer in computers]
+    return [await parse_single_computer(computer) for computer in computers]
 
 
-def get_single_phone_page(page: BeautifulSoup) -> list[Product]:
+async def get_single_phone_page(page: BeautifulSoup) -> list[Product]:
     phones = page.select("div.col-lg-9 > div.row > div.col-md-4")
-    return [get_single_phone(phone) for phone in phones]
+    return [await get_single_phone(phone) for phone in phones]
 
 
 def get_all_laptops() -> list[Product]:
@@ -259,44 +264,61 @@ def get_all_touch() -> list[Product]:
     return [get_single_tablet(touch) for touch in touch_tag]
 
 
-def get_all_home_products() -> list[Product]:
-    page = requests.get(HOME_URL).content
-    first_page = BeautifulSoup(page, "html.parser")
-    return get_single_page_home_product(first_page)
+async def get_all_home_products(client: AsyncClient) -> list[Product]:
+    page = await client.get(HOME_URL)
+    first_page = BeautifulSoup(page.content, "html.parser")
+    return await get_single_page_home_product(first_page)
 
 
-def get_all_computers() -> list[Product]:
-    page = requests.get(COMPUTER_URL).content
-    first_page = BeautifulSoup(page, "html.parser")
-    return get_single_computer_page(first_page)
+async def get_all_computers(client: AsyncClient) -> list[Product]:
+    page = await client.get(COMPUTER_URL)
+    first_page = BeautifulSoup(page.content, "html.parser")
+    return await get_single_computer_page(first_page)
 
 
-def get_all_phones() -> list[Product]:
-    page = requests.get(PHONE_URL).content
-    first_page = BeautifulSoup(page, "html.parser")
-    return get_single_phone_page(first_page)
+async def get_all_phones(client: AsyncClient) -> list[Product]:
+    page = await client.get(PHONE_URL)
+    first_page = BeautifulSoup(page.content, "html.parser")
+    return await get_single_phone_page(first_page)
 
 
-def write_file_to_csv(laptops: list[Product], file_name: str) -> None:
+async def write_file_to_csv(products: list[Product], file_name: str) -> None:
     with open(file_name, "w", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(PRODUCT_FIELDS)
-        writer.writerows([astuple(laptop) for laptop in laptops])
+        writer.writerows([astuple(product) for product in products])
+
+
+async def get_products_without_driver() -> None:
+    async with httpx.AsyncClient() as client:
+        async with asyncio.TaskGroup() as tg:
+            tasks = [
+                (tg.create_task(get_all_home_products(client)), "home.csv"),
+                (tg.create_task(get_all_computers(client)), "computers.csv"),
+                (tg.create_task(get_all_phones(client)), "phones.csv")
+            ]
+            for task, filename in tasks:
+                data = await task
+                await write_file_to_csv(data, filename)
 
 
 def get_all_products() -> None:
-    laptops = get_all_laptops()
-    write_file_to_csv(laptops, "laptops.csv")
-    tablets = get_all_tablets()
-    write_file_to_csv(tablets, "tablets.csv")
-    touch = get_all_touch()
-    write_file_to_csv(touch, "touch.csv")
-    home_products = get_all_home_products()
-    write_file_to_csv(home_products, "home.csv")
-    computers = get_all_computers()
-    write_file_to_csv(computers, "computers.csv")
-    phones = get_all_phones()
-    write_file_to_csv(phones, "phones.csv")
+    with pool.ProcessPoolExecutor(3) as executor:
+        future_to_task = {
+            executor.submit(get_all_laptops): "laptops.csv",
+            executor.submit(get_all_tablets): "tablets.csv",
+            executor.submit(get_all_touch): "touch.csv"
+        }
+        for future in pool.as_completed(future_to_task):
+            try:
+                write_file_to_csv(future.result(), future_to_task[future])
+            except Exception as e:
+                print(
+                    f"An error occurred in "
+                    f"{future_to_task[future].split('.')[0]}\n"
+                    f"{e}"
+                )
+    asyncio.run(get_products_without_driver())
 
 
 if __name__ == "__main__":
