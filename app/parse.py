@@ -3,7 +3,7 @@ import concurrent.futures as pool
 import csv
 import logging
 import time
-from dataclasses import dataclass, astuple, fields
+from dataclasses import astuple
 from urllib.parse import urljoin
 
 import httpx
@@ -14,6 +14,15 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.wait import WebDriverWait
 
+from app.items import Product, PRODUCT_FIELDS
+from app.utils import (
+    parse_single_home_product,
+    parse_single_computer,
+    get_single_phone,
+    get_single_laptop,
+    get_single_tablet
+)
+
 BASE_URL = "https://webscraper.io/"
 HOME_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/")
 LAPTOP_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/computers/laptops")
@@ -21,116 +30,6 @@ TABLETS_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/computers/tablets")
 TOUCH_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/phones/touch")
 COMPUTER_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/computers")
 PHONE_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/phones")
-
-
-@dataclass
-class Product:
-    title: str
-    description: str
-    price: float
-    rating: int
-    num_of_reviews: int
-
-
-PRODUCT_FIELDS = [field.name for field in fields(Product)]
-
-
-def get_single_laptop(laptop: BeautifulSoup) -> Product:
-    return Product(
-        title=laptop.select_one("a.title")["title"],
-        description=laptop.select_one(
-            "p.card-text.description"
-        ).text.replace(
-            "\xa0",
-            " "
-        ),
-        price=float(laptop.select_one("h4.price").text.replace("$", "")),
-        rating=len(laptop.select("span.ws-icon")),
-        num_of_reviews=int(laptop.select_one("p.review-count").text.split()[0])
-    )
-
-
-def get_single_tablet(tablet: BeautifulSoup) -> Product:
-    return Product(
-        title=tablet.select_one("a.title")["title"],
-        description=tablet.select_one(
-            "p.card-text.description"
-        ).text.replace(
-            "\xa0",
-            " "
-        ),
-        price=float(tablet.select_one("h4.price").text.replace("$", "")),
-        rating=len(tablet.select("span.ws-icon")),
-        num_of_reviews=int(tablet.select_one("p.review-count").text.split()[0])
-    )
-
-
-def get_single_touch(touch: BeautifulSoup) -> Product:
-    return Product(
-        title=touch.select_one("a.title")["title"],
-        description=touch.select_one(
-            "p.card-text.description"
-        ).text.replace(
-            "\xa0",
-            " "
-        ),
-        price=float(touch.select_one("h4.price").text.replace("$", "")),
-        rating=len(touch.select("span.ws-icon")),
-        num_of_reviews=int(touch.select_one("p.review-count").text.split()[0])
-    )
-
-
-async def get_single_phone(phone: BeautifulSoup) -> Product:
-    return Product(
-        title=phone.select_one("a.title")["title"],
-        description=phone.select_one(
-            "p.card-text.description"
-        ).text.replace(
-            "\xa0",
-            " "
-        ),
-        price=float(phone.select_one("h4.price").text.replace("$", "")),
-        rating=len(phone.select("span.ws-icon")),
-        num_of_reviews=int(phone.select_one("p.review-count").text.split()[0])
-    )
-
-
-async def parse_single_home_product(product: BeautifulSoup) -> Product:
-    return Product(
-        title=product.select_one("a.title")["title"],
-        description=product.select_one(
-            "p.card-text.description"
-        ).text.replace(
-            "\xa0",
-            " "
-        ),
-        price=float(product.select_one("h4.price").text.replace("$", "")),
-        rating=len(product.select("span.ws-icon")),
-        num_of_reviews=int(
-            product.select_one(
-                "p.review-count"
-            ).text.split()[0]
-        )
-    )
-
-
-async def parse_single_computer(computer: BeautifulSoup) -> Product:
-    return Product(
-        title=computer.select_one("a.title")["title"],
-        description=computer.select_one(
-            "p.card-text.description"
-        ).text.replace(
-            "\xa0",
-            " "
-        ),
-        price=float(computer.select_one("h4.price").text.replace("$", "")),
-        rating=len(computer.select("span.ws-icon")),
-        num_of_reviews=int(
-            computer.select_one(
-                "p.review-count"
-            ).text.split()[0]
-        )
-    )
 
 
 async def get_single_page_home_product(page: BeautifulSoup) -> list[Product]:
@@ -314,9 +213,10 @@ def get_all_products() -> None:
                 write_file_to_csv(future.result(), future_to_task[future])
             except Exception as e:
                 print(
-                    f"An error occurred in "
-                    f"{future_to_task[future].split('.')[0]}\n"
-                    f"{e}"
+                    f"""
+                    An error occurred in {future_to_task[future].split(".")[0]}\n
+                    {e}
+                    """
                 )
     asyncio.run(get_products_without_driver())
 
